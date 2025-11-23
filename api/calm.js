@@ -6,7 +6,7 @@ export default function handler(req, res) {
 
   // Debug: check every env variable
   const checkVars = {
-    OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
+    HF_TOKEN: !!process.env.HF_TOKEN,
     GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
     DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY,
   };
