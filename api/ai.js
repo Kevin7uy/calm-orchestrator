@@ -1,76 +1,40 @@
-export default async function handler(req, res) {
+async function callHuggingFace(prompt, model) {
   try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Only POST allowed" });
-    }
-
-    const { prompt, provider } = req.body;
-
-    if (!prompt || !provider) {
-      return res.status(400).json({ error: "prompt and provider required" });
-    }
-
-    let output = "";
-
-    // === 1️⃣ HuggingFace ===
-    if (provider === "hf") {
-      const response = await fetch(
-        "https://api-inference.huggingface.co/models/gpt2",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.HF_API_KEY}`,
-          },
-          body: JSON.stringify({ inputs: prompt }),
-        }
-      );
-
-      const data = await response.json();
-      output = data[0]?.generated_text || "No response from HuggingFace.";
-    }
-
-    // === 2️⃣ OpenRouter ===
-    if (provider === "openrouter") {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const res = await fetch(
+      `https://api-inference.huggingface.co/models/${model}`,
+      {
         method: "POST",
         headers: {
+          Authorization: `Bearer ${process.env.HF_API_KEY}`,
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          Accept: "application/json",
         },
         body: JSON.stringify({
-          model: "meta-llama/llama-3-8b-instruct",
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
+          inputs: prompt,
+          parameters: {
+            max_new_tokens: 200,
+            temperature: 0.7
+          }
+        })
+      }
+    );
 
-      const data = await response.json();
-      output = data.choices?.[0]?.message?.content || "No response from OpenRouter.";
-    }
+    const data = await res.json();
 
-    // === 3️⃣ Gemini ===
-    if (provider === "gemini") {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              { parts: [{ text: prompt }] }
-            ]
-          }),
-        }
-      );
+    console.log("HF Response:", data);
 
-      const data = await response.json();
-      output = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response from Gemini.";
-    }
+    // CASE 1: {"generated_text": "..."}
+    if (data.generated_text) return data.generated_text;
 
-    return res.status(200).json({ output });
+    // CASE 2: [{"generated_text": "..."}]
+    if (Array.isArray(data) && data[0]?.generated_text)
+      return data[0].generated_text;
 
+    // CASE 3: Error response
+    if (data.error) return `[HF ERROR] ${data.error}`;
+
+    return "[HF UNKNOWN RESPONSE]";
   } catch (err) {
-    console.error("AI endpoint error:", err);
-    return res.status(500).json({ error: "Server error", details: err.message });
+    return `[HF FETCH ERROR] ${err.message}`;
   }
 }
