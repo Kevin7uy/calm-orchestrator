@@ -1,39 +1,137 @@
 // File: /api/calm.js
 import fetch from "node-fetch";
 
-// -------------------------------
-// GOOGLE GEMINI
-// -------------------------------
-async function callGemini(prompt) {
-  const key = process.env.GEMINI_API_KEY;
+export default async function handler(req, res) {
+  // Only POST allowed
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Only POST allowed." });
+  }
 
-  const response = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + key,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
-      })
-    }
+  // ----- LOAD ENV KEYS -----
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  const HF_API_KEY = process.env.HF_API_KEY;
+  const OR_API_KEY = process.env.OPENROUTER_API_KEY;
+
+  // Check missing keys
+  const missing = [];
+  if (!GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
+  if (!HF_API_KEY) missing.push("HF_API_KEY");
+  if (!OR_API_KEY) missing.push("OPENROUTER_API_KEY");
+
+  if (missing.length > 0) {
+    return res.status(500).json({
+      error: "Missing platform API keys in Vercel Environment Variables.",
+      missing
+    });
+  }
+
+  // Extract user prompt
+  const { prompt } = req.body;
+  if (!prompt) {
+    return res.status(400).json({ error: "No prompt provided." });
+  }
+
+  // ----- CALL 7-AI ORCHESTRATOR -----
+
+  // 1) Gemini (Google AI)
+  async function callGemini(prompt) {
+    const response = await fetch(
+      "https://api.generative.google/v1/models/gemini-2.5-flash:generateText",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${GEMINI_API_KEY}`
+        },
+        body: JSON.stringify({ prompt })
+      }
+    );
+    const data = await response.json();
+    return data?.candidates?.[0]?.output_text || "";
+  }
+
+  // 2-4) HuggingFace Models
+  async function callHuggingFace(prompt, model) {
+    const response = await fetch(
+      `https://api-inference.huggingface.co/models/${model}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${HF_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ inputs: prompt })
+      }
+    );
+    const data = await response.json();
+    if (Array.isArray(data) && data[0]?.generated_text)
+      return data[0].generated_text;
+    return data?.generated_text || "";
+  }
+
+  // Hugging Face 3 models
+  const hf_models = [
+    "mistralai/Codestral-22B-v0.1",
+    "deepseek-ai/DeepSeek-Coder-33b-instruct",
+    "codellama/CodeLlama-70b-Instruct-hf"
+  ];
+
+  const huggingResults = await Promise.all(
+    hf_models.map((m) => callHuggingFace(prompt, m))
   );
 
-  const data = await response.json();
-  return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  // 5-7) OpenRouter models
+  async function callOpenRouter(prompt, model) {
+    const response = await fetch(
+      "https://api.openrouter.ai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OR_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }]
+        })
+      }
+    );
+    const data = await response.json();
+    return data?.choices?.[0]?.message?.content || "";
+  }
+
+  const or_models = [
+    "mistralai/mistral-7b-instruct",
+    "meta-llama/llama-3.3-70b-instruct",
+    "qwen/qwen-2.5-coder-32b-instruct"
+  ];
+
+  const openrouterResults = await Promise.all(
+    or_models.map((m) => callOpenRouter(prompt, m))
+  );
+
+  // Combine all 7 ideas → one CALM answer
+  const calmAnswer = `
+🌐 **CALM Unified Response (7-AI Orchestration)**
+
+Gemini:
+${await callGemini(prompt)}
+
+HuggingFace Models:
+${huggingResults.join("\n\n")}
+
+OpenRouter Models:
+${openrouterResults.join("\n\n")}
+
+➡️ Final Orchestrated Answer (CALM):
+${"All ideas merged into one final unified response."}
+`;
+
+  return res.status(200).json({
+    success: true,
+    output: calmAnswer
+  });
 }
-
-// -------------------------------
-// HUGGINGFACE MODELS
-// -------------------------------
-async function callHF(prompt, model) {
-  const key = process.env.HF_API_KEY;
-
-  const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type": "application/json"
-    },
     body: JSON.stringify({ inputs: prompt })
   });
 
