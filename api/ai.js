@@ -1,126 +1,91 @@
 import fetch from "node-fetch";
 
-function env(name) {
-  return process.env[name] || null;
-}
+const HF_MODELS = [
+  { name: "CodeLlama-7B", url: "https://api-inference.huggingface.co/models/codellama/CodeLlama-7b-Instruct-hf" },
+  { name: "DeepSeek-Coder-1.3B", url: "https://api-inference.huggingface.co/models/deepseek-ai/deepseek-coder-1.3b-instruct" },
+  { name: "Mistral-7B", url: "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2" },
+];
 
-async function callHuggingFace(prompt, model) {
-  const key = env("HF_API_KEY");
-  if (!key) throw new Error("Missing HF_API_KEY");
-
-  const res = await fetch("https://router.huggingface.co/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 300,
-    }),
-  });
-
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || JSON.stringify(data);
-}
-
-async function callOpenRouter(prompt, model) {
-  const key = env("OPENROUTER_API_KEY");
-  if (!key) throw new Error("Missing OPENROUTER_API_KEY");
-
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || JSON.stringify(data);
-}
-
-async function callGemini(prompt) {
-  const key = env("GEMINI_API_KEY");
-  if (!key) throw new Error("Missing GEMINI_API_KEY");
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-    }),
-  });
-
-  const data = await res.json();
-  return (
-    data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-    data?.candidates?.[0]?.content ||
-    JSON.stringify(data)
-  );
-}
+const OPENROUTER_MODELS = [
+  { name: "Mistral 7B Instruct", model: "mistralai/mistral-7b-instruct" },
+  { name: "Llama 3.3 70B", model: "meta-llama/llama-3.3-70b-instruct" },
+  { name: "Qwen2.5 Coder 32B", model: "qwen/qwen-2.5-coder-32b-instruct" },
+];
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Use POST only." });
-  }
-
-  const { prompt } = req.body || {};
-  if (!prompt) {
-    return res.status(400).json({ error: "Missing prompt." });
-  }
-
-  const missing = [];
-  if (!env("HF_API_KEY")) missing.push("HF_API_KEY");
-  if (!env("OPENROUTER_API_KEY")) missing.push("OPENROUTER_API_KEY");
-  if (!env("GEMINI_API_KEY")) missing.push("GEMINI_API_KEY");
-
-  if (missing.length > 0) {
-    return res.status(500).json({
-      error: "Missing environment variables",
-      missing,
-    });
-  }
-
   try {
-    const calls = [
-      callGemini(prompt),
-      callHuggingFace(prompt, "mistralai/Mistral-7B-Instruct-v0.2"),
-      callHuggingFace(prompt, "codellama/CodeLlama-7b-Instruct-hf"),
-      callHuggingFace(prompt, "deepseek-ai/deepseek-coder-1.3b-instruct"),
-      callOpenRouter(prompt, "mistralai/mistral-7b-instruct"),
-      callOpenRouter(prompt, "meta-llama/llama-3.3-70b-instruct"),
-      callOpenRouter(prompt, "qwen/qwen-2.5-coder-32b-instruct"),
-    ];
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
 
-    const outputs = await Promise.allSettled(calls);
+    const { prompt } = req.body;
+    if (!prompt) {
+      return res.status(400).json({ error: "Prompt is required" });
+    }
 
-    const result = outputs.map((r, i) => ({
-      model: [
-        "Gemini",
-        "HF_Mistral7B",
-        "HF_CodeLlama7B",
-        "HF_DeepSeek1.3B",
-        "OR_Mistral7B",
-        "OR_Llama3.3",
-        "OR_Qwen2.5",
-      ][i],
-      ...(r.status === "fulfilled"
-        ? { output: r.value }
-        : { error: r.reason.message }),
-    }));
+    const results = [];
 
-    res.status(200).json({
-      prompt,
-      result,
-    });
+    // --- Hugging Face ---
+    for (const model of HF_MODELS) {
+      try {
+        const response = await fetch(model.url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.HF_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ inputs: prompt }),
+        });
+        const data = await response.json();
+        results.push({ model: model.name, output: data });
+      } catch (err) {
+        results.push({ model: model.name, error: err.message });
+      }
+    }
+
+    // --- OpenRouter ---
+    for (const model of OPENROUTER_MODELS) {
+      try {
+        const response = await fetch("https://api.openrouter.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: model.model,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        const data = await response.json();
+        results.push({ model: model.name, output: data });
+      } catch (err) {
+        results.push({ model: model.name, error: err.message });
+      }
+    }
+
+    // --- Gemini (Google AI Studio) ---
+    try {
+      const response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        {
+          method: "POST",
+          headers: {
+            "x-goog-api-key": process.env.GEMINI_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
+        }
+      );
+      const data = await response.json();
+      results.push({ model: "Gemini 2.5 Flash", output: data });
+    } catch (err) {
+      results.push({ model: "Gemini 2.5 Flash", error: err.message });
+    }
+
+    res.status(200).json({ results });
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
   }
