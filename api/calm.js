@@ -1,7 +1,8 @@
+import fetch from "node-fetch";
+
 export default {
   models: {
     huggingface: {
-      // FREE TIER MODELS (HuggingFace Router)
       codellama: {
         name: "CodeLlama-7B Instruct",
         url: "https://router.huggingface.co/models/codellama/CodeLlama-7b-Instruct-hf",
@@ -34,61 +35,46 @@ export default {
       },
     },
 
-    // OPENROUTER FREE MODELS
     openrouter: {
       mistral7b: {
         name: "OpenRouter Mistral 7B",
-        url: "https://openrouter.ai/api/v1/chat/completions",
+        url: "https://api.openrouter.ai/v1/chat/completions",
         token: process.env.OPENROUTER_API_KEY,
         model: "mistralai/mistral-7b-instruct",
       },
       llama33: {
         name: "Llama 3.3 70B FREE",
-        url: "https://openrouter.ai/api/v1/chat/completions",
+        url: "https://api.openrouter.ai/v1/chat/completions",
         token: process.env.OPENROUTER_API_KEY,
         model: "meta-llama/llama-3.3-70b-instruct",
       },
       qwenCoder: {
         name: "Qwen 2.5 Coder 32B FREE",
-        url: "https://openrouter.ai/api/v1/chat/completions",
+        url: "https://api.openrouter.ai/v1/chat/completions",
         token: process.env.OPENROUTER_API_KEY,
         model: "qwen/qwen-2.5-coder-32b-instruct",
       },
     },
 
-    // GOOGLE AI STUDIO FREE MODEL
     google: {
       geminiFlash: {
         name: "Gemini 2.5 Flash",
         url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-        token: process.env.GOOGLE_API_KEY,
+        token: process.env.GEMINI_API_KEY,
         model: "gemini-2.5-flash",
       },
     },
   },
 
-  // ---- UNIFIED CHAT FUNCTION ----
   async chat({ provider, message }) {
     const config = this.models[provider.group][provider.model];
+    if (!config) throw new Error("Model config not found.");
 
-    if (!config) {
-      throw new Error("Model config not found.");
-    }
-
-    if (provider.group === "huggingface") {
-      return await this.callHuggingFace(config, message);
-    }
-
-    if (provider.group === "openrouter") {
-      return await this.callOpenRouter(config, message);
-    }
-
-    if (provider.group === "google") {
-      return await this.callGoogle(config, message);
-    }
+    if (provider.group === "huggingface") return await this.callHuggingFace(config, message);
+    if (provider.group === "openrouter") return await this.callOpenRouter(config, message);
+    if (provider.group === "google") return await this.callGoogle(config, message);
   },
 
-  // ---- HUGGINGFACE REQUEST ----
   async callHuggingFace(config, message) {
     const res = await fetch(config.url, {
       method: "POST",
@@ -96,17 +82,12 @@ export default {
         Authorization: `Bearer ${config.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        inputs: message,
-        parameters: { max_new_tokens: 300, temperature: 0.7 },
-      }),
+      body: JSON.stringify({ inputs: message, parameters: { max_new_tokens: 300, temperature: 0.7 } }),
     });
-
     const result = await res.json();
     return result?.generated_text ?? "[HF ERROR]";
   },
 
-  // ---- OPENROUTER REQUEST ----
   async callOpenRouter(config, message) {
     const res = await fetch(config.url, {
       method: "POST",
@@ -119,21 +100,16 @@ export default {
         messages: [{ role: "user", content: message }],
       }),
     });
-
     const json = await res.json();
     return json?.choices?.[0]?.message?.content ?? "[OR ERROR]";
   },
 
-  // ---- GOOGLE GEMINI REQUEST ----
   async callGoogle(config, message) {
     const res = await fetch(`${config.url}?key=${config.token}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: message }] }],
-      }),
+      body: JSON.stringify({ contents: [{ parts: [{ text: message }] }] }),
     });
-
     const json = await res.json();
     return json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "[GOOGLE ERROR]";
   },
