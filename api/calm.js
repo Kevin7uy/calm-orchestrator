@@ -1,39 +1,117 @@
 // File: /api/calm.js
 import fetch from "node-fetch";
 
-async function callGemini(prompt) {
-  try {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) return "";
-    const res = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateText?key=" +
-        key,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      }
-    );
-    const json = await res.json();
-    // try common field shapes
-    return json?.candidates?.[0]?.output_text || json?.output?.[0]?.content || json?.text || "";
-  } catch (e) {
-    console.error("callGemini error:", e?.message || e);
-    return "";
-  }
-}
+// === Helpers for each platform ===
 
-async function callHuggingFace(prompt, model) {
-  try {
-    const key = process.env.HF_API_KEY;
-    if (!key) return "";
-    const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+// Gemini (Google AI Studio)
+async function callGemini(prompt) {
+  const key = process.env.GEMINI_API_KEY;
+  const res = await fetch(
+    "https://api.generative.google/v1/models/gemini-2.5-flash:generateText",
+    {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
       },
-      body: JSON.stringify({ inputs: prompt }),
+      body: JSON.stringify({ prompt }),
+    }
+  );
+  const data = await res.json();
+  return data?.text || "";
+}
+
+// Hugging Face
+async function callHuggingFace(prompt, model) {
+  const key = process.env.HF_API_KEY;
+  const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ inputs: prompt }),
+  });
+  const data = await res.json();
+  if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
+  return data?.generated_text || "";
+}
+
+// OpenRouter
+async function callOpenRouter(prompt, model) {
+  const key = process.env.OPENROUTER_API_KEY;
+  const res = await fetch("https://api.openrouter.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content || "";
+}
+
+// === Main Handler ===
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Only POST allowed." });
+  }
+
+  const requiredKeys = ["GEMINI_API_KEY", "HF_API_KEY", "OPENROUTER_API_KEY"];
+  const missing = requiredKeys.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    return res.status(500).json({
+      error: "Missing platform API keys in Vercel Environment Variables.",
+      missing,
+    });
+  }
+
+  try {
+    const prompt = req.body?.prompt;
+    if (!prompt) {
+      return res.status(400).json({ error: "Missing prompt in request body." });
+    }
+
+    // Call all AIs in parallel
+    const [
+      geminiText,
+      hfCodestral,
+      hfDeepseek,
+      hfCodeLlama,
+      orMistral,
+      orLlama33,
+      orQwen,
+    ] = await Promise.all([
+      callGemini(prompt),
+      callHuggingFace(prompt, "mistralai/Codestral-22B-v0.1"),
+      callHuggingFace(prompt, "deepseek-ai/DeepSeek-Coder-33b-instruct"),
+      callHuggingFace(prompt, "codellama/CodeLlama-70b-Instruct-hf"),
+      callOpenRouter(prompt, "mistralai/mistral-7b-instruct"),
+      callOpenRouter(prompt, "meta-llama/llama-3.3-70b-instruct"),
+      callOpenRouter(prompt, "qwen/qwen-2.5-coder-32b-instruct"),
+    ]);
+
+    // Combine all answers into one final response
+    const combinedAnswer = [
+      geminiText,
+      hfCodestral,
+      hfDeepseek,
+      hfCodeLlama,
+      orMistral,
+      orLlama33,
+      orQwen,
+    ].filter(Boolean).join("\n\n---\n\n");
+
+    return res.status(200).json({ response: combinedAnswer });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error", details: err.message });
+  }
+}
     });
     const json = await res.json();
     if (Array.isArray(json) && json[0]?.generated_text) return json[0].generated_text;
