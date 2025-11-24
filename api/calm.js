@@ -1,40 +1,4 @@
-// File: /api/calm.js
-import fetch from "node-fetch";
-
-// === Helpers for each platform ===
-
-// Gemini (Google AI Studio)
-async function callGemini(prompt) {
-  const key = process.env.GEMINI_API_KEY;
-  const res = await fetch(
-    "https://api.generative.google/v1/models/gemini-2.5-flash:generateText",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({ prompt }),
-    }
-  );
-  const data = await res.json();
-  return data?.text || "";
-}
-
-// Hugging Face
-async function callHuggingFace(prompt, model) {
-  const key = process.env.HF_API_KEY;
-  const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs: prompt }),
-  });
-  const data = await res.json();
-  if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
-  return data?.generated_text || "";
+GEMINI_API_KEY  return data?.generated_text || "";
 }
 
 // OpenRouter
