@@ -1,19 +1,4 @@
-{
-  "name": "calm-orchestrator",
-  "version": "1.0.0",
-  "description": "CALM AI Orchestrator API",
-  "type": "module",
-  "main": "api/calm.js",
-  "scripts": {
-    "start": "node api/calm.js",
-    "dev": "vercel dev"
-  },
-  "engines": {
-    "node": "20.x"
-  },
-  "dependencies": {
-    "node-fetch": "^3.3.2",
-    "dotenv": "^16.3.1"
-  },
-  "devDependencies": {}
+"dependencies": {
+  "node-fetch": "^3.3.2",
+  "dotenv": "^16.3.1"
 }
