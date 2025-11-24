@@ -1,55 +1,62 @@
-GEMINI_API_KEY  return data?.generated_text || "";
-}
+// File: /api/calm.js
 
-// OpenRouter
-async function callOpenRouter(prompt, model) {
-  const key = process.env.OPENROUTER_API_KEY;
-  const res = await fetch("https://api.openrouter.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || "";
-}
-
-// === Main Handler ===
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Only POST allowed." });
   }
 
-  const requiredKeys = ["GEMINI_API_KEY", "HF_API_KEY", "OPENROUTER_API_KEY"];
-  const missing = requiredKeys.filter((k) => !process.env[k]);
-  if (missing.length > 0) {
-    return res.status(500).json({
-      error: "Missing platform API keys in Vercel Environment Variables.",
-      missing,
-    });
+  const { prompt } = req.body;
+  if (!prompt) return res.status(400).json({ error: "Missing 'prompt'." });
+
+  // Check environment variables
+  const missingVars = ["GEMINI_API_KEY", "HF_API_KEY", "OPENROUTER_API_KEY"].filter(
+    (k) => !process.env[k]
+  );
+  if (missingVars.length > 0) {
+    return res.status(500).json({ error: "Missing API keys.", missing: missingVars });
   }
 
   try {
-    const prompt = req.body?.prompt;
-    if (!prompt) {
-      return res.status(400).json({ error: "Missing prompt in request body." });
+    // --- Helper functions ---
+    async function callGemini(prompt) {
+      const key = process.env.GEMINI_API_KEY;
+      const response = await fetch(
+        "https://api.generative.google/v1/models/gemini-2.5-flash:generateText",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ prompt }),
+        }
+      );
+      const data = await response.json();
+      return data?.text || "";
     }
 
-    // Call all AIs in parallel
-    const [
-      geminiText,
-      hfCodestral,
-      hfDeepseek,
-      hfCodeLlama,
-      orMistral,
-      orLlama33,
-      orQwen,
-    ] = await Promise.all([
+    async function callHuggingFace(prompt, model) {
+      const key = process.env.HF_API_KEY;
+      const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ inputs: prompt }),
+      });
+      const data = await response.json();
+      if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
+      return data?.generated_text || "";
+    }
+
+    async function callOpenRouter(prompt, model) {
+      const key = process.env.OPENROUTER_API_KEY;
+      const response = await fetch("https://api.openrouter.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }),
+      });
+      const data = await response.json();
+      return data?.choices?.[0]?.message?.content || "";
+    }
+
+    // --- Parallel call 7 AIs ---
+    const results = await Promise.all([
       callGemini(prompt),
       callHuggingFace(prompt, "mistralai/Codestral-22B-v0.1"),
       callHuggingFace(prompt, "deepseek-ai/DeepSeek-Coder-33b-instruct"),
@@ -59,136 +66,12 @@ export default async function handler(req, res) {
       callOpenRouter(prompt, "qwen/qwen-2.5-coder-32b-instruct"),
     ]);
 
-    // Combine all answers into one final response
-    const combinedAnswer = [
-      geminiText,
-      hfCodestral,
-      hfDeepseek,
-      hfCodeLlama,
-      orMistral,
-      orLlama33,
-      orQwen,
-    ].filter(Boolean).join("\n\n---\n\n");
+    // Combine all outputs
+    const combinedAnswer = results.join("\n\n");
 
-    return res.status(200).json({ response: combinedAnswer });
+    return res.status(200).json({ success: true, answer: combinedAnswer });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: "Server error", details: err.message });
-  }
-}
-    });
-    const json = await res.json();
-    if (Array.isArray(json) && json[0]?.generated_text) return json[0].generated_text;
-    return json?.generated_text || json?.[0] || "";
-  } catch (e) {
-    console.error("callHuggingFace error:", e?.message || e);
-    return "";
-  }
-}
-
-async function callOpenRouter(prompt, model) {
-  try {
-    const key = process.env.OPENROUTER_API_KEY;
-    if (!key) return "";
-    const res = await fetch("https://api.openrouter.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    const json = await res.json();
-    return json?.choices?.[0]?.message?.content || json?.result || "";
-  } catch (e) {
-    console.error("callOpenRouter error:", e?.message || e);
-    return "";
-  }
-}
-
-async function gatherAIResponses(prompt) {
-  // Run HuggingFace 3 models in parallel
-  const hfModels = [
-    "mistralai/Codestral-22B-v0.1",
-    "deepseek-ai/DeepSeek-Coder-33b-instruct",
-    "codellama/CodeLlama-70b-Instruct-hf",
-  ];
-  const hfPromises = hfModels.map((m) => callHuggingFace(prompt, m));
-
-  // Run OpenRouter 3 models in parallel
-  const orModels = [
-    "mistralai/mistral-7b-instruct",
-    "meta-llama/llama-3.3-70b-instruct",
-    "qwen/qwen-2.5-coder-32b-instruct",
-  ];
-  const orPromises = orModels.map((m) => callOpenRouter(prompt, m));
-
-  // Gemini (single call)
-  const geminiPromise = callGemini(prompt);
-
-  // Wait for all
-  const results = await Promise.all([geminiPromise, ...hfPromises, ...orPromises]);
-
-  // results order: [gemini, hf1, hf2, hf3, or1, or2, or3]
-  const [gemini, ...others] = results;
-
-  // Build a readable merged answer
-  const merged = [
-    `--- Gemini (lead) ---\n${gemini || "[no gemini output]"}`,
-    `--- HuggingFace (Codestral) ---\n${others[0] || "[no output]"}`,
-    `--- HuggingFace (DeepSeek) ---\n${others[1] || "[no output]"}`,
-    `--- HuggingFace (CodeLlama) ---\n${others[2] || "[no output]"}`,
-    `--- OpenRouter (Mistral 7B) ---\n${others[3] || "[no output]"}`,
-    `--- OpenRouter (Llama 3.3) ---\n${others[4] || "[no output]"}`,
-    `--- OpenRouter (Qwen2.5) ---\n${others[5] || "[no output]"}`,
-  ].join("\n\n");
-
-  // Make a final unified paragraph — simplest merge: Gemini first + concat
-  const finalUnified = `${gemini || ""}\n\n${others.filter(Boolean).join("\n\n")}`;
-
-  // truncate to avoid huge responses
-  return {
-    merged,
-    finalUnified: finalUnified.slice(0, 12000),
-  };
-}
-
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Only POST allowed." });
-  }
-
-  const prompt = req.body?.prompt;
-  if (!prompt) {
-    return res.status(400).json({ error: "Missing 'prompt' in request body." });
-  }
-
-  // check env variables
-  const missing = [];
-  if (!process.env.GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
-  if (!process.env.HF_API_KEY) missing.push("HF_API_KEY");
-  if (!process.env.OPENROUTER_API_KEY) missing.push("OPENROUTER_API_KEY");
-
-  if (missing.length > 0) {
-    return res.status(500).json({
-      error: "Missing platform API keys in Vercel Environment Variables.",
-      missing,
-    });
-  }
-
-  try {
-    const { merged, finalUnified } = await gatherAIResponses(prompt);
-
-    return res.status(200).json({
-      success: true,
-      finalUnified,
-      details: merged,
-    });
-  } catch (err) {
-    console.error("handler error:", err);
-    return res.status(500).json({ error: "Internal error", detail: err?.message || String(err) });
+    return res.status(500).json({ error: err.message });
   }
 }
