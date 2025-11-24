@@ -1,72 +1,85 @@
-// calm.js
+// File: /api/calm.js
 import fetch from "node-fetch";
 
-// --- Helpers for each platform ---
-
-// Gemini (Google AI Studio)
+// Helper: Gemini 2.5 Flash (Google AI Studio)
 async function callGemini(prompt) {
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY");
+  try {
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY");
 
-  const response = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-    {
+    const res = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      {
+        method: "POST",
+        headers: {
+          "x-goog-api-key": GEMINI_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            { parts: [{ text: prompt }] }
+          ]
+        }),
+      }
+    );
+
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.[0]?.text || "";
+  } catch (err) {
+    return `Error from Gemini: ${err.message}`;
+  }
+}
+
+// Helper: Hugging Face Router API
+async function callHuggingFace(prompt, model) {
+  try {
+    const HF_API_KEY = process.env.HF_API_KEY;
+    if (!HF_API_KEY) throw new Error("Missing HF_API_KEY");
+
+    const res = await fetch(`https://router.huggingface.co/models/${model}`, {
       method: "POST",
       headers: {
+        "Authorization": `Bearer ${HF_API_KEY}`,
         "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_API_KEY,
+      },
+      body: JSON.stringify({ inputs: prompt }),
+    });
+
+    const data = await res.json();
+
+    if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
+    return data?.generated_text || "";
+  } catch (err) {
+    return `Error from Hugging Face (${model}): ${err.message}`;
+  }
+}
+
+// Helper: OpenRouter
+async function callOpenRouter(prompt, model) {
+  try {
+    const OR_API_KEY = process.env.OR_API_KEY;
+    if (!OR_API_KEY) throw new Error("Missing OR_API_KEY");
+
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OR_API_KEY}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        model,
+        messages: [{ role: "user", content: prompt }]
       }),
-    }
-  );
+    });
 
-  const data = await response.json();
-  return data?.candidates?.[0]?.content?.[0]?.text || "";
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content || "";
+  } catch (err) {
+    return `Error from OpenRouter (${model}): ${err.message}`;
+  }
 }
 
-// Hugging Face Router
-async function callHuggingFace(prompt, model) {
-  const HF_API_KEY = process.env.HF_API_KEY;
-  if (!HF_API_KEY) throw new Error("Missing HF_API_KEY");
-
-  const response = await fetch(`https://router.huggingface.co/models/${model}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${HF_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs: prompt }),
-  });
-
-  const data = await response.json();
-  if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
-  return data?.generated_text || "";
-}
-
-// OpenRouter
-async function callOpenRouter(prompt, model = "openai/gpt-4o") {
-  const OR_API_KEY = process.env.OR_API_KEY;
-  if (!OR_API_KEY) throw new Error("Missing OR_API_KEY");
-
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OR_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  const data = await response.json();
-  return data?.choices?.[0]?.message?.content || "";
-}
-
-// --- Main handler ---
+// Main API handler
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Only POST allowed." });
@@ -78,23 +91,23 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Parallel calls to all 7 AIs (simulate them)
+    // Call all AIs concurrently with resilience
     const results = await Promise.all([
-      callGemini(prompt),                                  // Gemini
-      callHuggingFace(prompt, "mistralai/Codestral-22B-v0.1"), // Hugging Face 1
-      callHuggingFace(prompt, "deepseek-ai/DeepSeek-Coder-33b-instruct"), // Hugging Face 2
-      callHuggingFace(prompt, "codellama/CodeLlama-70b-Instruct-hf"),      // Hugging Face 3
-      callOpenRouter(prompt, "mistralai/mistral-7b-instruct"),             // OpenRouter 1
-      callOpenRouter(prompt, "meta-llama/llama-3.3-70b-instruct"),         // OpenRouter 2
-      callOpenRouter(prompt, "qwen/qwen-2.5-coder-32b-instruct"),          // OpenRouter 3
+      callGemini(prompt),
+      callHuggingFace(prompt, "mistralai/Codestral-22B-v0.1"),
+      callHuggingFace(prompt, "deepseek-ai/DeepSeek-Coder-33b-instruct"),
+      callHuggingFace(prompt, "codellama/CodeLlama-70b-Instruct-hf"),
+      callOpenRouter(prompt, "mistralai/mistral-7b-instruct"),
+      callOpenRouter(prompt, "meta-llama/llama-3.3-70b-instruct"),
+      callOpenRouter(prompt, "qwen/qwen-2.5-coder-32b-instruct"),
     ]);
 
-    // Combine responses into one answer
+    // Combine answers
     const combinedAnswer = results.filter(Boolean).join("\n\n");
 
     res.status(200).json({ answer: combinedAnswer });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "AI fetch failed", details: err.message });
+    res.status(500).json({ error: "Unexpected server error", details: err.message });
   }
 }
