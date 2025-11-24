@@ -1,39 +1,154 @@
+// api/calm.js
 export default async function handler(req, res) {
-  // Allow only POST
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Only POST allowed." });
   }
 
-  // Read user prompt
-  const { prompt } = req.body || {};
-  if (!prompt) {
-    return res.status(400).json({ error: "Missing prompt." });
+  const userPrompt = req.body?.prompt;
+  if (!userPrompt) {
+    return res.status(400).json({ error: "No prompt provided." });
   }
 
-  // Load API keys from Vercel Environment Variables
+  // ENVIRONMENT VARIABLES (SAFE)
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  const HF_TOKEN = process.env.HF_TOKEN;
+  const OPENROUTER_KEY = process.env.OPENROUTER_KEY;
+  const HF_API_KEY = process.env.HF_API_KEY;
 
-  // If missing API keys → stop
-  if (!GEMINI_API_KEY || !OPENROUTER_API_KEY || !HF_TOKEN) {
+  // SAFETY CHECK
+  if (!GEMINI_API_KEY || !OPENROUTER_KEY || !HF_API_KEY) {
     return res.status(500).json({
-      error: "Missing platform API keys in Vercel Environment Variables.",
+      error:
+        "Missing API keys in Vercel Environment Variables. Add them in Project › Settings › Environment Variables.",
     });
   }
 
-  // MASTER SYSTEM PROMPT (CALM Orchestrator)
-  const SYSTEM_PROMPT = `
-You are CALM — the Central Orchestrator AI.  
-Behind you operate 7 specialist AIs from 3 platforms:
-HuggingFace (Codelok, Visuox, Mobilis)
-OpenRouter (Gamebane, Architek, Animus)
-Gemini (Integro)
+  // --------------------------
+  //  🧠 1. GEMINI (Google AI)
+  // --------------------------
+  async function callGemini() {
+    try {
+      const r = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
+          GEMINI_API_KEY,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: userPrompt }] }],
+          }),
+        }
+      );
+      const data = await r.json();
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    } catch {
+      return "";
+    }
+  }
 
-You combine ALL their thinking into ONE response.
+  // ---------------------------------------
+  //  🧠 2,3,4 — OPENROUTER (Mistral, Qwen, Llama)
+  // ---------------------------------------
+  async function callOpenRouter(modelName) {
+    try {
+      const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${OPENROUTER_KEY}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [{ role: "user", content: userPrompt }],
+        }),
+      });
 
-Rules:
-• Content must be 100% clean + family-friendly  
+      const data = await r.json();
+      return data.choices?.[0]?.message?.content || "";
+    } catch {
+      return "";
+    }
+  }
+
+  const mistral = callOpenRouter("mistralai/mistral-7b-instruct");
+  const llama = callOpenRouter("meta-llama/llama-3.3-70b-instruct");
+  const qwen = callOpenRouter("qwen/qwen-2.5-coder-32b-instruct");
+
+  // ---------------------------------------
+  //  🧠 5,6,7 — HUGGING FACE (Codestral, DeepSeek, CodeLlama)
+  // ---------------------------------------
+  async function callHF(modelName) {
+    try {
+      const r = await fetch(`https://api-inference.huggingface.co/models/${modelName}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${HF_API_KEY}`,
+        },
+        body: JSON.stringify({ inputs: userPrompt }),
+      });
+
+      const data = await r.json();
+      return data[0]?.generated_text || "";
+    } catch {
+      return "";
+    }
+  }
+
+  const codestral = callHF("mistralai/Codestral-22B-v0.1");
+  const deepseek = callHF("deepseek-ai/deepseek-coder-33b-instruct");
+  const codellama = callHF("codellama/CodeLlama-70b-Instruct-hf");
+
+  // ---------------------------------------
+  // 🧠 WAIT FOR ALL 7 AIs
+  // ---------------------------------------
+  const results = await Promise.all([
+    callGemini(),
+    mistral,
+    llama,
+    qwen,
+    codestral,
+    deepseek,
+    codellama,
+  ]);
+
+  // ---------------------------------------
+  // 🟣 MERGE INTO ONE ANSWER (CALM MODE)
+  // ---------------------------------------
+  const calmAnswer = `
+You are CALM — a union of 7 powerful AIs working together as ONE mind.
+Below are each AI’s insights, merged into a unified answer.
+
+⚪ **Gemini:**  
+${results[0]}
+
+🟤 **Mistral 7B:**  
+${results[1]}
+
+🟢 **Llama 3.3 70B:**  
+${results[2]}
+
+🔵 **Qwen2.5 Coder 32B:**  
+${results[3]}
+
+🟣 **Codestral 22B:**  
+${results[4]}
+
+🟡 **DeepSeek Coder 33B:**  
+${results[5]}
+
+🟠 **CodeLlama 70B:**  
+${results[6]}
+
+---
+
+### 🔥 **CALM Unified Response**
+Based on all AIs, the combined answer is:
+
+${results.join("\n\n")}
+`;
+
+  return res.status(200).json({ response: calmAnswer });
+}
 • CALM answers user questions directly  
 • But when building a project → all 7 AIs collaborate internally  
 • User sees only CALM (not individual AIs)  
