@@ -1,101 +1,140 @@
-// File: /api/calm.js
-import fetch from "node-fetch";
+export default {
+  models: {
+    huggingface: {
+      // FREE TIER MODELS (HuggingFace Router)
+      codellama: {
+        name: "CodeLlama-7B Instruct",
+        url: "https://router.huggingface.co/models/codellama/CodeLlama-7b-Instruct-hf",
+        token: process.env.HF_TOKEN,
+        model: "codellama/CodeLlama-7b-Instruct-hf",
+      },
+      deepseek: {
+        name: "DeepSeek Coder 1.3B",
+        url: "https://router.huggingface.co/models/deepseek-ai/deepseek-coder-1.3b-instruct",
+        token: process.env.HF_TOKEN,
+        model: "deepseek-ai/deepseek-coder-1.3b-instruct",
+      },
+      starcoder: {
+        name: "StarCoder2-3B",
+        url: "https://router.huggingface.co/models/bigcode/starcoder2-3b",
+        token: process.env.HF_TOKEN,
+        model: "bigcode/starcoder2-3b",
+      },
+      mistral7b: {
+        name: "Mistral 7B Instruct",
+        url: "https://router.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
+        token: process.env.HF_TOKEN,
+        model: "mistralai/Mistral-7B-Instruct-v0.2",
+      },
+      phi2: {
+        name: "Phi-2",
+        url: "https://router.huggingface.co/models/microsoft/phi-2",
+        token: process.env.HF_TOKEN,
+        model: "microsoft/phi-2",
+      },
+    },
 
-// Helper: call Gemini (Google AI Studio)
-async function callGemini(prompt) {
-  const API_KEY = process.env.GEMINI_API_KEY;
-  if (!API_KEY) throw new Error("Missing GEMINI_API_KEY");
-  const response = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-    {
+    // OPENROUTER FREE MODELS
+    openrouter: {
+      mistral7b: {
+        name: "OpenRouter Mistral 7B",
+        url: "https://openrouter.ai/api/v1/chat/completions",
+        token: process.env.OPENROUTER_TOKEN,
+        model: "mistralai/mistral-7b-instruct",
+      },
+      llama33: {
+        name: "Llama 3.3 70B FREE",
+        url: "https://openrouter.ai/api/v1/chat/completions",
+        token: process.env.OPENROUTER_TOKEN,
+        model: "meta-llama/llama-3.3-70b-instruct",
+      },
+      qwenCoder: {
+        name: "Qwen 2.5 Coder 32B FREE",
+        url: "https://openrouter.ai/api/v1/chat/completions",
+        token: process.env.OPENROUTER_TOKEN,
+        model: "qwen/qwen-2.5-coder-32b-instruct",
+      },
+    },
+
+    // GOOGLE AI STUDIO FREE MODEL
+    google: {
+      geminiFlash: {
+        name: "Gemini 2.5 Flash",
+        url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        token: process.env.GOOGLE_API_KEY,
+        model: "gemini-2.5-flash",
+      },
+    },
+  },
+
+  // ---- UNIFIED CHAT FUNCTION ----
+  async chat({ provider, message }) {
+    const config = this.models[provider.group][provider.model];
+
+    if (!config) {
+      throw new Error("Model config not found.");
+    }
+
+    if (provider.group === "huggingface") {
+      return await this.callHuggingFace(config, message);
+    }
+
+    if (provider.group === "openrouter") {
+      return await this.callOpenRouter(config, message);
+    }
+
+    if (provider.group === "google") {
+      return await this.callGoogle(config, message);
+    }
+  },
+
+  // ---- HUGGINGFACE REQUEST ----
+  async callHuggingFace(config, message) {
+    const res = await fetch(config.url, {
       method: "POST",
       headers: {
-        "x-goog-api-key": API_KEY,
+        Authorization: `Bearer ${config.token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        inputs: message,
+        parameters: { max_new_tokens: 300, temperature: 0.7 },
       }),
-    }
-  );
-  const data = await response.json();
-  return data?.candidates?.[0]?.content || data?.error || "";
-}
+    });
 
-// Helper: call Hugging Face free-tier models
-async function callHuggingFace(prompt, model) {
-  const API_KEY = process.env.HF_API_KEY;
-  if (!API_KEY) throw new Error("Missing HF_API_KEY");
-  const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs: prompt }),
-  });
-  const data = await response.json();
-  if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
-  return data?.generated_text || data?.error || "";
-}
+    const result = await res.json();
+    return result?.generated_text ?? "[HF ERROR]";
+  },
 
-// Helper: call OpenRouter free-tier models
-async function callOpenRouter(prompt, model) {
-  const API_KEY = process.env.OR_API_KEY;
-  if (!API_KEY) throw new Error("Missing OR_API_KEY");
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await response.json();
-  return data?.choices?.[0]?.message?.content || data?.error || "";
-}
+  // ---- OPENROUTER REQUEST ----
+  async callOpenRouter(config, message) {
+    const res = await fetch(config.url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [{ role: "user", content: message }],
+      }),
+    });
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Only POST allowed." });
-  }
+    const json = await res.json();
+    return json?.choices?.[0]?.message?.content ?? "[OR ERROR]";
+  },
 
-  const prompt = req.body.prompt;
-  if (!prompt) return res.status(400).json({ error: "Missing 'prompt' in body." });
+  // ---- GOOGLE GEMINI REQUEST ----
+  async callGoogle(config, message) {
+    const res = await fetch(`${config.url}?key=${config.token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: message }] }],
+      }),
+    });
 
-  try {
-    // Call all free-tier Hugging Face models
-    const hfModels = [
-      "codellama/CodeLlama-7b-Instruct-hf",
-      "deepseek-ai/deepseek-coder-1.3b-instruct",
-      "bigcode/starcoder2-3b",
-      "mistralai/Mistral-7B-Instruct-v0.2",
-      "microsoft/phi-2",
-    ];
-    const hfResponses = await Promise.all(hfModels.map((model) => callHuggingFace(prompt, model)));
-
-    // Call OpenRouter free-tier models
-    const orModels = [
-      "mistralai/mistral-7b-instruct",
-      "meta-llama/llama-3.3-70b-instruct",
-      "qwen/qwen-2.5-coder-32b-instruct",
-    ];
-    const orResponses = await Promise.all(orModels.map((model) => callOpenRouter(prompt, model)));
-
-    // Call Gemini
-    const geminiResponse = await callGemini(prompt);
-
-    // Merge all AI outputs into one answer (simple concatenation for now)
-    const finalAnswer = [geminiResponse, ...hfResponses, ...orResponses]
-      .filter(Boolean)
-      .join("\n\n---\n\n");
-
-    return res.status(200).json({ answer: finalAnswer });
-  } catch (error) {
-    console.error("Calm AI Error:", error);
-    return res.status(500).json({ error: "AI fetch failed", details: error.message });
-  }
-}
+    const json = await res.json();
+    return json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "[GOOGLE ERROR]";
+  },
+};
