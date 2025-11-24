@@ -1,54 +1,52 @@
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
   try {
-    const { prompt, model } = req.body;
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "METHOD_NOT_ALLOWED" });
+    }
 
-    if (!prompt || !model) {
+    const { provider, model, prompt } = req.body;
+
+    if (!provider || !model || !prompt) {
       return res.status(400).json({
-        error: "Missing fields",
-        message: "Provide 'prompt' and 'model'"
+        error: "BAD_REQUEST",
+        message: "provider, model, and prompt are required"
       });
     }
 
-    const HF_API_KEY = process.env.HF_API_KEY;
-    if (!HF_API_KEY) {
-      return res.status(500).json({
-        error: "Server config error",
-        message: "HF_API_KEY is missing in Vercel environment"
-      });
-    }
+    let hfUrl = `https://api-inference.huggingface.co/models/${model}`;
 
-    const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+    const hfResponse = await fetch(hfUrl, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${HF_API_KEY}`,
+        "Authorization": `Bearer ${process.env.HF_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ inputs: prompt })
     });
 
-    // FIX: HuggingFace sometimes returns HTML (Not Found)
-    const text = await response.text();
+    // If HuggingFace sends HTML (not JSON)
+    const text = await hfResponse.text();
 
-    let data;
     try {
-      data = JSON.parse(text);
-    } catch (e) {
+      const data = JSON.parse(text);
+
+      return res.status(200).json({
+        output: data[0]?.generated_text || "",
+        raw: data
+      });
+
+    } catch (jsonError) {
       return res.status(500).json({
-        error: "Bad response from HuggingFace",
+        error: "SERVER FAILED",
+        message: "HuggingFace did not send JSON",
         raw: text
       });
     }
 
-    return res.status(200).json({ output: data });
-
-  } catch (error) {
+  } catch (err) {
     return res.status(500).json({
       error: "SERVER FAILED",
-      message: error.message || "Unknown server error"
+      message: err.message
     });
   }
 }
