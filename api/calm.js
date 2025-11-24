@@ -1,66 +1,135 @@
-export default function handler(req, res) {
-  // Check request method
+// File: /api/calm.js
+import fetch from "node-fetch";
+
+// -------------------------------
+// GOOGLE GEMINI
+// -------------------------------
+async function callGemini(prompt) {
+  const key = process.env.GEMINI_API_KEY;
+
+  const response = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + key,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }]
+      })
+    }
+  );
+
+  const data = await response.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// -------------------------------
+// HUGGINGFACE MODELS
+// -------------------------------
+async function callHF(prompt, model) {
+  const key = process.env.HF_API_KEY;
+
+  const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ inputs: prompt })
+  });
+
+  const data = await response.json();
+
+  // HF can return arrays or direct text
+  if (Array.isArray(data) && data[0]?.generated_text) return data[0].generated_text;
+  return data?.generated_text || "";
+}
+
+// -------------------------------
+// OPENROUTER MODELS
+// -------------------------------
+async function callOpenRouter(prompt, model) {
+  const key = process.env.OPENROUTER_API_KEY;
+
+  const response = await fetch("https://api.openrouter.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  const data = await response.json();
+  return data?.choices?.[0]?.message?.content || "";
+}
+
+// -------------------------------
+// 7 AI ORCHESTRATION
+// -------------------------------
+async function gatherAIResponses(prompt) {
+  const tasks = [
+    // 1 - Gemini
+    callGemini(prompt),
+
+    // 2-4 HuggingFace
+    callHF(prompt, "mistralai/Codestral-22B-v0.1"),
+    callHF(prompt, "deepseek-ai/DeepSeek-Coder-33b-instruct"),
+    callHF(prompt, "codellama/CodeLlama-70b-Instruct-hf"),
+
+    // 5-7 OpenRouter
+    callOpenRouter(prompt, "mistralai/mistral-7b-instruct"),
+    callOpenRouter(prompt, "meta-llama/llama-3.3-70b-instruct"),
+    callOpenRouter(prompt, "qwen/qwen-2.5-coder-32b-instruct")
+  ];
+
+  const results = await Promise.all(tasks);
+  return results.filter(Boolean).join("\n\n").slice(0, 6000);
+}
+
+// -------------------------------
+// API ENTRY POINT
+// -------------------------------
+export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Only POST allowed." });
   }
 
-  // Debug: check every env variable
-  const checkVars = {
-    OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
-    ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
-    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
-    GROQ_API_KEY: !!process.env.GROQ_API_KEY,
-    XAI_API_KEY: !!process.env.XAI_API_KEY,
-    DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY,
-  };
-
-  // If ANY variable is missing, show exactly which one
-  const missing = Object.keys(checkVars).filter((k) => !checkVars[k]);
+  // Check required environment variables
+  const missing = [];
+  if (!process.env.GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
+  if (!process.env.HF_API_KEY) missing.push("HF_API_KEY");
+  if (!process.env.OPENROUTER_API_KEY) missing.push("OPENROUTER_API_KEY");
 
   if (missing.length > 0) {
     return res.status(500).json({
       error: "Missing platform API keys in Vercel Environment Variables.",
-      missing,
+      missing
     });
   }
 
-  // If everything OK
-  return res.status(200).json({
-    success: true,
-    message: "All environment variables loaded correctly!",
-  });
-}
-      return "";
-    }
+  const prompt = req.body?.prompt;
+  if (!prompt) {
+    return res.status(400).json({ error: "Missing 'prompt' field in JSON body." });
   }
 
-  const codestral = callHF("mistralai/Codestral-22B-v0.1");
-  const deepseek = callHF("deepseek-ai/deepseek-coder-33b-instruct");
-  const codellama = callHF("codellama/CodeLlama-70b-Instruct-hf");
+  try {
+    const answer = await gatherAIResponses(prompt);
 
-  // ---------------------------------------
-  // 🧠 WAIT FOR ALL 7 AIs
-  // ---------------------------------------
-  const results = await Promise.all([
-    callGemini(),
-    mistral,
-    llama,
-    qwen,
-    codestral,
-    deepseek,
-    codellama,
-  ]);
+    return res.status(200).json({
+      success: true,
+      response: answer
+    });
 
-  // ---------------------------------------
-  // 🟣 MERGE INTO ONE ANSWER (CALM MODE)
-  // ---------------------------------------
-  const calmAnswer = `
-You are CALM — a union of 7 powerful AIs working together as ONE mind.
-Below are each AI’s insights, merged into a unified answer.
-
-⚪ **Gemini:**  
-${results[0]}
-
+  } catch (err) {
+    return res.status(500).json({
+      error: "Calm orchestrator internal error.",
+      detail: err.message
+    });
+  }
+}
 🟤 **Mistral 7B:**  
 ${results[1]}
 
