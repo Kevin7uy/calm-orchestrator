@@ -1,27 +1,40 @@
-import calm from "./calm.js"; // import the AI module
+// index.js — frontend script
 
-// If using Vercel serverless function
-export default async function handler(req, res) {
-  try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method not allowed. Use POST." });
+const input = document.getElementById("userInput");
+const sendBtn = document.getElementById("sendBtn");
+const output = document.getElementById("output");
+
+async function sendMessage() {
+    const text = input.value.trim();
+    if (!text) return;
+
+    output.innerHTML += `<div class="msg user">${text}</div>`;
+    input.value = "";
+
+    try {
+        const res = await fetch("/api/ai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: text })
+        });
+
+        if (!res.ok) {
+            throw new Error("Server error: " + res.status);
+        }
+
+        const data = await res.json();
+
+        output.innerHTML += `<div class="msg bot">${data.response}</div>`;
+    } catch (err) {
+        console.error(err);
+        output.innerHTML += `<div class="msg error">Error: ${err.message}</div>`;
     }
 
-    const { provider, model, message } = req.body;
-
-    if (!provider || !model || !message) {
-      return res.status(400).json({ error: "Missing provider, model, or message in body." });
-    }
-
-    // Call our AI unified function
-    const aiResponse = await calm.chat({
-      provider: { group: provider, model },
-      message,
-    });
-
-    return res.status(200).json({ response: aiResponse });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server error", details: err.message });
-  }
+    output.scrollTop = output.scrollHeight;
 }
+
+sendBtn.addEventListener("click", sendMessage);
+
+input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") sendMessage();
+});
