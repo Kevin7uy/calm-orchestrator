@@ -1,11 +1,8 @@
 {
-  "name": "calm-orchestrator",
+  "name": "ai-multiserver",
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "node-fetch": "^3.3.2"
-  },
-  "engines": {
-    "node": "20.x"
+    "firebase": "10.7.1"
   }
 }
